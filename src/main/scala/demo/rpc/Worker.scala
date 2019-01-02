@@ -1,11 +1,19 @@
 package demo.rpc
 
+import java.util.UUID
+
 import akka.actor.{Actor, ActorSelection, ActorSystem, Props}
 import com.typesafe.config.ConfigFactory
 
-class Worker extends Actor{
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.duration._
+
+class Worker(val masterHost:String, val masterPort:Int, val memory:Int, val cores:Int) extends Actor{
 
   var master: ActorSelection = _
+  val workerId = UUID.randomUUID().toString
+  val CHECK_INTERVAL = 10000
+
   /**
     * 建立连接
     */
@@ -13,11 +21,20 @@ class Worker extends Actor{
     super.preStart()
     println("client start")
     // akka.tcp://MasterSystem@10.0.3.66:8888
-    master = context.actorSelection("akka.tcp://MasterSystem@10.0.3.66:8888/user/Master")
-    master ! "connect"
+    master = context.actorSelection(s"akka.tcp://MasterSystem@$masterHost:$masterPort/user/Master")
+    master ! RegisterWorker(workerId, memory, cores)
   }
 
   override def receive: Receive = {
+    case RegisteredWorker(masterUrl)=>{
+      println("masterUrl:" + masterUrl)
+      // 启动定时器发送心跳
+      context.system.scheduler.schedule(0.millis, CHECK_INTERVAL.millis, self, SendHeardBeat)
+    }
+    case  SendHeardBeat => {
+      println("receive SendHeardBeat")
+      master ! Heartbeat(workerId)
+    }
     case "connect" => {
       println("client connected")
     }
@@ -36,6 +53,10 @@ object Worker{
   def main(args: Array[String]): Unit = {
     val host = args(0)
     val port = args(1).toInt
+    val masterHost = args(2)
+    val masterPort = args(3).toInt
+    val memory = args(4).toInt
+    val cores = args(4).toInt
     val configStr: String =
       s"""
          |akka.actor.provider = "akka.remote.RemoteActorRefProvider"
@@ -51,7 +72,7 @@ object Worker{
 //    master ! "hello"
 //    actorSystem.wait(10000)
 //    actorSystem.terminate()
-    actorSystem.actorOf(Props[Worker], "Worker")
+    actorSystem.actorOf(Props(new Worker(masterHost, masterPort, memory, cores)), "Worker")
     actorSystem.wait(10)
     actorSystem.terminate()
   }
